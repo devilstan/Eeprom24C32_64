@@ -1,3 +1,4 @@
+#include <TimerOne.h>
 #include <Wire.h>
 #include <Eeprom24C32_64.h>
 
@@ -6,7 +7,7 @@
  ******************************************************************************/
 //define sumchk addr
 #define eeprom_size         4096                                              // 4K bytes
-#define sumchk_addr_16u     0x02FF                                            // 0x02FF
+#define sumchk_addr_16u     0x07FE                                            // 0x0FFF
 #define count               16                                                // 16 bytes for reading
 /**************************************************************************//**
  * \def EEPROM_ADDRESS
@@ -17,6 +18,7 @@
 /******************************************************************************
  * Private variable definitions.
  ******************************************************************************/
+byte func_state;
 
 static Eeprom24C32_64 eeprom(EEPROM_ADDRESS);
 byte readbuffer[count] = { 0 };                                               // eeprom data buffer for continue reading
@@ -28,9 +30,21 @@ byte checksumEE2;
 byte data;
 unsigned int sumchk_in_EE;
 unsigned int sumchk_in_Calc;
+
+int Button = 8;
+int ledRead = 9;
+int ledWrite = 10;
+int ledStandby = 11;
+boolean ledval = 0;
+int ButtonVal = 0;
+byte ButtonVal2 = 0;
+
+unsigned int Buttontmr = 65535;
+unsigned int blinktmr = 0;
 /******************************************************************************
  * Public function definitions.
  ******************************************************************************/
+void ISR_TimerOne(void);
 void EepromWriteByteWithDelay (int addr, byte value, int delay_t = 5);
 void EepromWriteBitWithDelay (int addr, byte bitno, byte value, int delay_t = 5);
 unsigned int hexToDec(String hexString);
@@ -43,14 +57,86 @@ void setup() {
   // put your setup code here, to run once:
     // Initialize serial communication.
     Serial.begin(9600);
-        
+
+    // Initialize TimerOne interrupt
+    Timer1.initialize(1000);
+    Timer1.attachInterrupt(ISR_TimerOne);
+    Buttontmr = 0;
+
+    // Initialize function state
+    func_state = 1;
+    
     // Initialize EEPROM library.
     eeprom.initialize();
-    eeprom_state = 1;
+    eeprom_state = 0;
+
+    // Initialize digital IO
+    pinMode(Button, INPUT);
+    pinMode(ledRead, OUTPUT);
+    pinMode(ledWrite, OUTPUT);
+    pinMode(ledStandby, OUTPUT);
+    digitalWrite(ledRead, HIGH);
+    digitalWrite(ledWrite, HIGH);
+    digitalWrite(ledStandby, HIGH);
 }
 
 void loop() 
 {
+  ButtonVal = digitalRead(Button);
+  if ( ButtonVal == 1 ) {
+      ButtonVal2 = (ButtonVal2 << 4) | (byte)0x0f; 
+  }
+  else {
+      ButtonVal2 = (ButtonVal2 << 4) & (byte)0xf0; 
+  }
+  //Serial.println( ButtonVal2 );
+
+  if ( ButtonVal2 == 15 ) {
+       Buttontmr = 0;
+  }
+  if ( ButtonVal2 == 240 ) {
+      if( Buttontmr < 500 ) {
+          if ( ++func_state > 3 ) {
+              func_state = 1;
+          }
+      }
+      else if ( Buttontmr > 1000 ) {
+          if ( func_state == 3 ) {
+              eeprom_state = 1;
+              ledval = 0;
+          }
+          else if ( func_state == 2 ) {
+              eeprom_state = 2;
+              ledval = 0;
+          }
+      }
+  }
+  switch (func_state) {
+      case 0: // Idle
+          break;
+      case 1: // standby
+          digitalWrite(ledRead, HIGH);
+          digitalWrite(ledWrite, HIGH);
+          digitalWrite(ledStandby, ledval);
+          break;
+      case 2: // Reading eeprom
+          digitalWrite(ledRead, ledval);
+          digitalWrite(ledWrite, HIGH);
+          digitalWrite(ledStandby, HIGH);
+          break;
+      case 3: // Writing eeprom
+          digitalWrite(ledRead, HIGH);
+          digitalWrite(ledWrite, ledval);
+          digitalWrite(ledStandby, HIGH);
+          break;
+      default:
+          digitalWrite(ledRead, HIGH);
+          digitalWrite(ledWrite, HIGH);
+          digitalWrite(ledStandby, HIGH);
+          func_state = 0;
+          break;
+  }
+  
   // put your main code here, to run repeatedly:
   switch ( eeprom_state ) {
       case 0:// idle
@@ -126,6 +212,21 @@ void loop()
           Serial.println("get into standby...");
           eeprom_state = 0;
       break;
+  }
+  if ( blinktmr == 0 ) {
+      //Serial.println( ledval );
+      ledval = !ledval;
+      blinktmr = 100;
+  }
+}
+
+void ISR_TimerOne(void)
+{
+  if (Buttontmr < 65535) {
+      Buttontmr++;
+  }
+  if (blinktmr > 0) {
+      blinktmr--;
   }
 }
 
